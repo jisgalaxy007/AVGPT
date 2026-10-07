@@ -183,24 +183,37 @@ async function resgatarPagamento({ deviceId, comprovativo }) {
   // Pagamento está 'RECEBIDO' e disponível!
   const valorRecebido = parseFloat(pagamento.amount);
 
-  // Determina qual plano conceder pelo valor pago em MZN (MT)
+  // Busca os planos ativos cadastrados no banco
   const { rows: planos } = await query(
-    `SELECT * FROM planos WHERE ativo = true ORDER BY preco_mzn DESC`
+    `SELECT * FROM planos WHERE ativo = true ORDER BY preco_mzn ASC`
   );
 
-  let planoEscolhido = null;
-  let diasConcedidos = 1;
+  // O valor PAGO deve corresponder EXATAMENTE ao preço de um dos planos cadastrados (tolerância máxima de 0.50 MT)
+  const planoEscolhido = planos.find((p) => {
+    const preco = parseFloat(p.preco_mzn);
+    return Math.abs(valorRecebido - preco) <= 0.50;
+  });
 
-  for (const p of planos) {
-    if (valorRecebido >= parseFloat(p.preco_mzn)) {
-      planoEscolhido = p;
-      diasConcedidos = p.dias;
-      break;
-    }
+  // SE O VALOR NÃO CORRESPONDER A NENHUM PACOTE ATIVO, REJEITA IMEDIATAMENTE!
+  if (!planoEscolhido) {
+    const listaValores = planos.map(p => `${parseFloat(p.preco_mzn).toFixed(2)} MT (${p.nome})`).join(', ');
+    return {
+      sucesso: false,
+      status: 'valor_invalido',
+      mensagem: `❌ O valor pago de ${valorRecebido.toFixed(2)} MT não corresponde a nenhum pacote VIP ativo. Valores válidos: ${listaValores}. Nenhuma licença foi ativada.`,
+      valor_recebido: valorRecebido,
+      tx_id: pagamento.tx_id,
+      planos_disponiveis: planos.map(p => ({
+        id: p.id,
+        nome: p.nome,
+        preco_mzn: parseFloat(p.preco_mzn),
+        dias: p.dias
+      }))
+    };
   }
 
-  // Se o valor for menor que o plano mais baixo (ex: teste de 5 MT), garante pelo menos 1 dia
-  const nomePlano = planoEscolhido ? planoEscolhido.nome : `${diasConcedidos} Dia(s) VIP`;
+  const diasConcedidos = planoEscolhido.dias;
+  const nomePlano = planoEscolhido.nome;
 
   // Marca o comprovativo como USADO
   await query(

@@ -729,6 +729,7 @@ const handleResgate = async (req, res) => {
     const httpStatus = resultado.sucesso ? 200
       : resultado.status === 'nao_encontrado' ? 404
       : resultado.status === 'ja_usado' ? 409
+      : resultado.status === 'valor_invalido' ? 422
       : 400;
 
     res.status(httpStatus).json(resultado);
