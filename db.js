@@ -127,7 +127,7 @@ async function initDatabase() {
     `);
 
     // -----------------------------------------------
-    // 6. TABELA ORDERS (Pedidos Binance Pay - já existia)
+    // 6. TABELA ORDERS (Pedidos Binance Pay)
     // -----------------------------------------------
     await client.query(`
       CREATE TABLE IF NOT EXISTS orders (
@@ -146,6 +146,26 @@ async function initDatabase() {
         paid_at         TIMESTAMP WITH TIME ZONE,
         created_at      TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
         updated_at      TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+      );
+    `);
+
+    // -----------------------------------------------
+    // 7. TABELA MOBILE_PAYMENTS (e-Mola e M-Pesa)
+    // -----------------------------------------------
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS mobile_payments (
+        id                  SERIAL PRIMARY KEY,
+        service             VARCHAR(20) NOT NULL,
+        tx_id               VARCHAR(100) UNIQUE NOT NULL,
+        amount              DECIMAL(10,2) NOT NULL,
+        sender_phone        VARCHAR(50),
+        sender_name         VARCHAR(150),
+        raw_message         TEXT NOT NULL,
+        status              VARCHAR(20) DEFAULT 'RECEBIDO',
+        usado_por_device_id VARCHAR(64),
+        usado_em            TIMESTAMP WITH TIME ZONE,
+        plano_ativado       VARCHAR(50),
+        created_at          TIMESTAMP WITH TIME ZONE DEFAULT NOW()
       );
     `);
 

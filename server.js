@@ -4,6 +4,7 @@ const cors = require('cors');
 const { pool, query, initDatabase } = require('./db');
 const binance = require('./binance');
 const { criarPedido, buscarPedido, verificarPorTxid } = require('./pagamento');
+const mobileMoney = require('./mobile_money');
 
 const app = express();
 const PORT = process.env.PORT || 8080;
@@ -655,6 +656,96 @@ app.post('/api/configuracoes', async (req, res) => {
 });
 
 // -------------------------------------------------------------
+// APIs DE PAGAMENTOS MÓVEIS (e-Mola e M-Pesa - Moçambique)
+// -------------------------------------------------------------
+
+// 1. Webhook para o app gateway Android (celular que recebe os SMS)
+// Envia o SMS puro: { message: "ID Trans: ..." } ou { raw_sms: "..." }
+app.post('/api/mobile/webhook', async (req, res) => {
+  try {
+    const rawMessage = req.body.message || req.body.raw_sms || req.body.text || req.body.sms;
+    if (!rawMessage) {
+      return res.status(400).json({ success: false, error: 'Mensagem SMS não fornecida.' });
+    }
+
+    const registrado = await mobileMoney.registrarSmsRecebido(rawMessage);
+    console.log(`[MobileMoney] Novo SMS registrado: ${registrado.service.toUpperCase()} | ID: ${registrado.tx_id} | Valor: ${registrado.amount} MT`);
+
+    res.status(201).json({
+      success: true,
+      message: 'SMS registrado com sucesso com status RECEBIDO.',
+      data: registrado,
+    });
+  } catch (err) {
+    console.error('[MobileMoney] Erro ao registrar SMS:', err.message);
+    res.status(400).json({ success: false, error: err.message });
+  }
+});
+
+// 2. Resgatar / Validar comprovativo (App do cliente final)
+// O cliente cola a mensagem de confirmação completa no app
+// Body: { device_id: "DEV-4A7B8C9D", comprovativo: "ID Trans: PP261004.2203.Y98273..." }
+const handleResgate = async (req, res) => {
+  try {
+    const deviceId = req.body.device_id || req.body.deviceId;
+    const comprovativo = req.body.comprovativo || req.body.mensagem || req.body.tx_id || req.body.txid;
+
+    if (!deviceId) {
+      return res.status(400).json({ success: false, error: 'device_id é obrigatório.' });
+    }
+    if (!comprovativo) {
+      return res.status(400).json({ success: false, error: 'Comprovativo ou TXID não fornecido.' });
+    }
+
+    const resultado = await mobileMoney.resgatarPagamento({ deviceId, comprovativo });
+
+    const httpStatus = resultado.sucesso ? 200
+      : resultado.status === 'nao_encontrado' ? 404
+      : resultado.status === 'ja_usado' ? 409
+      : 400;
+
+    res.status(httpStatus).json(resultado);
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+};
+
+app.post('/api/mobile/resgatar', handleResgate);
+app.post('/api/mobile/validar', handleResgate);
+
+// 3. Consultar status de um TXID móvel específico
+app.get('/api/mobile/status/:txid', async (req, res) => {
+  try {
+    const { txid } = req.params;
+    const { rows } = await query('SELECT * FROM mobile_payments WHERE UPPER(tx_id) = $1', [txid.toUpperCase()]);
+    if (rows.length === 0) {
+      return res.status(404).json({ success: false, message: 'Transação não encontrada.' });
+    }
+    res.json({ success: true, data: rows[0] });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// 4. Listar transações recebidas (Admin / Histórico)
+app.get('/api/mobile/transactions', async (req, res) => {
+  try {
+    const { rows } = await query('SELECT * FROM mobile_payments ORDER BY created_at DESC LIMIT 100');
+    res.json({ success: true, count: rows.length, data: rows });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// 5. Testar parser de SMS (sem salvar)
+app.post('/api/mobile/parse', (req, res) => {
+  const text = req.body.message || req.body.text || req.body.sms;
+  if (!text) return res.status(400).json({ error: 'Texto não fornecido.' });
+  const parsed = mobileMoney.parseSms(text);
+  res.json({ success: true, parsed });
+});
+
+// -------------------------------------------------------------
 // HEALTH CHECK & STATUS
 // -------------------------------------------------------------
 app.get('/health', async (req, res) => {
@@ -679,7 +770,7 @@ app.get('/', (req, res) => {
   res.json({
     app: 'AVGPT Backend API',
     status: 'online',
-    version: '1.2.0',
+    version: '1.3.0',
     endpoints: {
       redirect_rota_pone: '/pone (Abre o App Android via avgpt://pagamento-sucesso)',
       webhook_escalapay: '/webhook/escalapay',
@@ -691,6 +782,11 @@ app.get('/', (req, res) => {
       pagamento_criar: 'POST /api/pagamento/criar',
       pagamento_verificar: 'POST /api/pagamento/verificar',
       pagamento_validar_token: 'POST /api/pagamento/validar-token',
+      mobile_webhook: 'POST /api/mobile/webhook (Recebe SMS puro de e-Mola / M-Pesa)',
+      mobile_resgatar: 'POST /api/mobile/resgatar (Cliente valida comprovativo colado)',
+      mobile_status: 'GET /api/mobile/status/:txid',
+      mobile_transactions: 'GET /api/mobile/transactions',
+      mobile_parse: 'POST /api/mobile/parse',
       users_sync: 'POST /api/users/sync',
       users_get: 'GET /api/users/:deviceId',
       users_stats: 'POST /api/users/stats',

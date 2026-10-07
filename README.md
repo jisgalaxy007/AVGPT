@@ -139,12 +139,40 @@ As tabelas são criadas e migradas automaticamente ao iniciar o backend:
 ### 6. `payments` (Histórico Unificado de Pagamentos)
 - Registros consolidados de EscalaPay e depósitos Binance.
 
+### 7. `mobile_payments` (e-Mola e M-Pesa - Moçambique)
+- `service`: `emola` ou `mpesa`
+- `tx_id`: ID único da transação (ex: `PP261004.2203.Y98273` ou `DJ37LT9PBN9`)
+- `amount`: Valor recebido em Meticais (MT)
+- `sender_phone`: Telefone do cliente (ex: `876563910` ou `258846079459`)
+- `sender_name`: Nome do titular da conta
+- `raw_message`: SMS completo original
+- `status`: `RECEBIDO` ou `USADO`
+- `usado_por_device_id`: Aparelho Android que utilizou o comprovativo
+- `usado_em`: Data e hora em que foi resgatado
+- `plano_ativado`: Nome do plano liberado (ex: `15 Dias VIP`)
+
+---
+
+## 🇲🇿 Fluxo Automatizado e-Mola & M-Pesa (SMS Gateway)
+
+1. **Recepção do SMS**: O celular com o chip receptor recebe a notificação da operadora e o app gateway envia para:
+   - `POST https://avgpt.fly.dev/api/mobile/webhook` com `{ "message": "ID Trans: PP..." }`
+   - O backend extrai o ID e o valor e salva com status `RECEBIDO`.
+2. **Resgate pelo Cliente**: O cliente transfere o dinheiro e cola a mensagem de confirmação no app AVGPT:
+   - `POST https://avgpt.fly.dev/api/mobile/resgatar` com `{ "device_id": "DEV-...", "comprovativo": "..." }`
+   - O backend extrai o TXID, verifica se existe, se não foi usado anteriormente, identifica o plano pelo valor em MT, marca como `USADO` e estende a validade do usuário instantaneamente!
+
 ---
 
 ## 🚀 Endpoints da API REST para o App Android
 
 | Método | Endpoint | Descrição |
 |---|---|---|
+| `POST` | `/api/mobile/webhook` | **Gateway**: Envia o SMS puro recebido do e-Mola ou M-Pesa |
+| `POST` | `/api/mobile/resgatar` | **Cliente**: Valida o comprovativo colado, impede reuso e libera a licença |
+| `GET` | `/api/mobile/status/:txid` | Consulta o status de um TXID móvel |
+| `GET` | `/api/mobile/transactions` | Lista os últimos pagamentos móveis recebidos |
+| `POST` | `/api/mobile/parse` | Testa o extrator de SMS sem gravar no banco |
 | `POST` | `/api/users/sync` | Login do aparelho (`device_id`). Cria ou atualiza e retorna validade/status |
 | `GET` | `/api/users/:deviceId` | Consulta status do aparelho e verifica expiração |
 | `POST` | `/api/users/stats` | Envia estatísticas de uso do bot e lucros |
