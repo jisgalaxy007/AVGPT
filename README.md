@@ -96,20 +96,68 @@ Além disso, a página conta com um design moderno escuro com fallback visual e 
 
 ---
 
-## 🗄️ Estrutura do Banco de Dados PostgreSQL
+## 🗄️ Estrutura do Banco de Dados PostgreSQL (Fly.io)
 
-As tabelas são criadas automaticamente ao iniciar o backend:
+As tabelas são criadas e migradas automaticamente ao iniciar o backend:
 
-- **`payments`**:
-  - `id`: Chave primária auto-incremento
-  - `transaction_id`: ID da transação da EscalaPay
-  - `customer_email`: Email do comprador
-  - `amount`: Valor da transação
-  - `currency`: Moeda (ex: `BRL`)
-  - `status`: Status do pagamento (`paid`, `approved`, `pending`, etc.)
-  - `gateway`: `escalapay`
-  - `payload`: Dados completos enviados no webhook em JSONB
-  - `created_at` / `updated_at`: Timestamps
+### 1. `users` (Usuários e Aparelhos Android)
+- `device_id`: Código Único do Celular (ex: `DEV-4A7B8C9D`) - Chave Primária
+- `user_name`: Nome personalizável (padrão: `Jogador VIP`)
+- `status`: `ATIVO`, `EXPIRADO` ou `TESTE`
+- `plano`: Nome do plano (ex: `15 Dias VIP`)
+- `validade_ate`: Data e hora de expiração da licença
+- `data_registro` / `ultima_vez_online`: Timestamps de atividade
+- `total_compras`: Total acumulado em MZN / USD
+- `total_vezes_usou_bot`: Contador de uso do robô
+- `total_lucro`, `ganhos_hoje`, `perdas_hoje`, `ganhos_ontem`, `perdas_ontem`, `ganhos_mes`, `perdas_mes`: Métricas financeiras
+
+### 2. `casas` (Casas de Apostas)
+- `id`: Identificador único (ex: `placard_mz`, `elephant_mz`)
+- `nome`, `pais`, `descricao`, `link`: Dados da casa e link de afiliado/login
+- `texto_botao`: Padrão `SINCRONIZAR E JOGAR AGORA`
+- `rating`: 1 a 5 estrelas
+- `badge`: Ex: `RECOMENDADA`, `POPULAR`, etc.
+- `criado_em`: Data de criação
+
+### 3. `planos` (Planos e Preços)
+- `id`: Ex: `plano_1d`, `plano_7d`, `plano_15d`, `plano_30d`
+- `nome`: Ex: `1 Dia VIP`, `7 Dias VIP`, `15 Dias VIP`, `30 Dias VIP`
+- `dias`: Quantidade de dias de acesso (1, 7, 15, 30)
+- `preco_mzn`: Preço em Meticais (350.00, 555.00, 799.00, 899.00)
+- `preco_usdt`: Preço em USDT (6.00, 12.22, 15.55, 22.32)
+- `periodo`, `is_popular`, `ativo`: Metadados
+
+### 4. `configuracoes` (Configurações Globais)
+- `id`: ID único (1)
+- `suporte_link`: Link direto para WhatsApp / Telegram de suporte
+- `aviso_admin`: Mensagem ou banner global de aviso para os jogadores
+- `versao_minima`: Versão mínima obrigatória do aplicativo (ex: `1.0`)
+
+### 5. `orders` (Pedidos Binance Pay por TXID)
+- Rastreia pedidos criados e verifica unicidade de TXID da Binance para liberação de licenças.
+
+### 6. `payments` (Histórico Unificado de Pagamentos)
+- Registros consolidados de EscalaPay e depósitos Binance.
+
+---
+
+## 🚀 Endpoints da API REST para o App Android
+
+| Método | Endpoint | Descrição |
+|---|---|---|
+| `POST` | `/api/users/sync` | Login do aparelho (`device_id`). Cria ou atualiza e retorna validade/status |
+| `GET` | `/api/users/:deviceId` | Consulta status do aparelho e verifica expiração |
+| `POST` | `/api/users/stats` | Envia estatísticas de uso do bot e lucros |
+| `GET` | `/api/casas` | Lista casas de apostas ativas |
+| `POST` | `/api/casas` | Cadastra ou edita uma casa |
+| `DELETE` | `/api/casas/:id` | Remove uma casa |
+| `GET` | `/api/planos` | Lista planos VIP com preços em MZN e USDT |
+| `POST` | `/api/planos` | Cria ou edita um plano |
+| `GET` | `/api/configuracoes` | Obtém link de suporte, aviso admin e versão mínima |
+| `POST` | `/api/configuracoes` | Atualiza link de suporte e avisos |
+| `POST` | `/api/pagamento/criar` | Cria pedido Binance Pay com código de referência |
+| `POST` | `/api/pagamento/verificar` | Valida TXID da Binance, evita reuso e libera a licença |
+| `POST` | `/api/pagamento/validar-token` | Valida token de acesso persistente |
 
 ---
 

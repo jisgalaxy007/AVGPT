@@ -413,6 +413,248 @@ app.get('/api/payments/:transactionId', async (req, res) => {
 
 
 // -------------------------------------------------------------
+// APIs DE USUÁRIOS E APARELHOS (users)
+// -------------------------------------------------------------
+
+// Obter dados do usuário pelo device_id (calcula status ATIVO/EXPIRADO com base na validade)
+app.get('/api/users/:deviceId', async (req, res) => {
+  try {
+    const { deviceId } = req.params;
+    const { rows } = await query('SELECT * FROM users WHERE device_id = $1', [deviceId]);
+    if (rows.length === 0) {
+      return res.status(404).json({ success: false, message: 'Usuário não encontrado.' });
+    }
+
+    let user = rows[0];
+    const agora = new Date();
+    const validade = new Date(user.validade_ate);
+
+    // Se a validade expirou e status ainda constava ATIVO, atualiza no banco
+    if (agora > validade && user.status === 'ATIVO') {
+      await query(`UPDATE users SET status = 'EXPIRADO' WHERE device_id = $1`, [deviceId]);
+      user.status = 'EXPIRADO';
+    }
+
+    res.json({ success: true, data: user });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Sincronizar/Cadastrar aparelho (Login do App Android)
+app.post('/api/users/sync', async (req, res) => {
+  try {
+    const { device_id, user_name, plano } = req.body;
+    if (!device_id) {
+      return res.status(400).json({ success: false, error: 'device_id é obrigatório.' });
+    }
+
+    const { rows: existente } = await query('SELECT * FROM users WHERE device_id = $1', [device_id]);
+
+    if (existente.length > 0) {
+      // Atualiza última vez online e nome se fornecido
+      const nomeFinal = user_name || existente[0].user_name;
+      const { rows: updated } = await query(`
+        UPDATE users 
+        SET ultima_vez_online = NOW(),
+            user_name = $2,
+            status = CASE WHEN validade_ate < NOW() THEN 'EXPIRADO' ELSE status END
+        WHERE device_id = $1
+        RETURNING *;
+      `, [device_id, nomeFinal]);
+
+      return res.json({ success: true, is_new: false, data: updated[0] });
+    }
+
+    // Novo usuário - concede plano inicial de 15 dias VIP
+    const nome = user_name || 'Jogador VIP';
+    const planoNome = plano || '15 Dias VIP';
+    const { rows: novo } = await query(`
+      INSERT INTO users (device_id, user_name, plano, status, validade_ate, data_registro, ultima_vez_online)
+      VALUES ($1, $2, $3, 'ATIVO', NOW() + INTERVAL '15 days', NOW(), NOW())
+      RETURNING *;
+    `, [device_id, nome, planoNome]);
+
+    res.status(201).json({ success: true, is_new: true, data: novo[0] });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Atualizar estatísticas de jogo e bot do usuário
+app.post('/api/users/stats', async (req, res) => {
+  try {
+    const {
+      device_id,
+      total_vezes_usou_bot,
+      total_lucro,
+      ganhos_hoje,
+      perdas_hoje,
+      ganhos_ontem,
+      perdas_ontem,
+      ganhos_mes,
+      perdas_mes
+    } = req.body;
+
+    if (!device_id) {
+      return res.status(400).json({ success: false, error: 'device_id é obrigatório.' });
+    }
+
+    const { rows } = await query(`
+      UPDATE users SET
+        total_vezes_usou_bot = COALESCE($2, total_vezes_usou_bot),
+        total_lucro = COALESCE($3, total_lucro),
+        ganhos_hoje = COALESCE($4, ganhos_hoje),
+        perdas_hoje = COALESCE($5, perdas_hoje),
+        ganhos_ontem = COALESCE($6, ganhos_ontem),
+        perdas_ontem = COALESCE($7, perdas_ontem),
+        ganhos_mes = COALESCE($8, ganhos_mes),
+        perdas_mes = COALESCE($9, perdas_mes),
+        ultima_vez_online = NOW()
+      WHERE device_id = $1
+      RETURNING *;
+    `, [
+      device_id,
+      total_vezes_usou_bot,
+      total_lucro,
+      ganhos_hoje,
+      perdas_hoje,
+      ganhos_ontem,
+      perdas_ontem,
+      ganhos_mes,
+      perdas_mes
+    ]);
+
+    if (rows.length === 0) {
+      return res.status(404).json({ success: false, message: 'Usuário não encontrado.' });
+    }
+
+    res.json({ success: true, data: rows[0] });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// -------------------------------------------------------------
+// APIs DE CASAS DE APOSTAS (casas)
+// -------------------------------------------------------------
+app.get('/api/casas', async (req, res) => {
+  try {
+    const { rows } = await query('SELECT * FROM casas ORDER BY rating DESC, criado_em ASC');
+    res.json({ success: true, count: rows.length, data: rows });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.post('/api/casas', async (req, res) => {
+  try {
+    const { id, nome, pais, descricao, link, texto_botao, rating, badge } = req.body;
+    if (!id || !nome || !pais || !link) {
+      return res.status(400).json({ success: false, error: 'id, nome, pais e link são obrigatórios.' });
+    }
+
+    const { rows } = await query(`
+      INSERT INTO casas (id, nome, pais, descricao, link, texto_botao, rating, badge, criado_em)
+      VALUES ($1, $2, $3, $4, $5, COALESCE($6, 'SINCRONIZAR E JOGAR AGORA'), COALESCE($7, 5), COALESCE($8, 'RECOMENDADA'), NOW())
+      ON CONFLICT (id) DO UPDATE SET
+        nome = EXCLUDED.nome,
+        pais = EXCLUDED.pais,
+        descricao = EXCLUDED.descricao,
+        link = EXCLUDED.link,
+        texto_botao = EXCLUDED.texto_botao,
+        rating = EXCLUDED.rating,
+        badge = EXCLUDED.badge
+      RETURNING *;
+    `, [id, nome, pais, descricao, link, texto_botao, rating, badge]);
+
+    res.json({ success: true, data: rows[0] });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.delete('/api/casas/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    await query('DELETE FROM casas WHERE id = $1', [id]);
+    res.json({ success: true, message: `Casa ${id} removida com sucesso.` });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// -------------------------------------------------------------
+// APIs DE PLANOS E PREÇOS (planos)
+// -------------------------------------------------------------
+app.get('/api/planos', async (req, res) => {
+  try {
+    const { rows } = await query('SELECT * FROM planos WHERE ativo = true ORDER BY dias ASC');
+    res.json({ success: true, count: rows.length, data: rows });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.post('/api/planos', async (req, res) => {
+  try {
+    const { id, nome, dias, preco_mzn, preco_usdt, periodo, is_popular, ativo } = req.body;
+    if (!id || !nome || !dias || preco_mzn === undefined || preco_usdt === undefined) {
+      return res.status(400).json({ success: false, error: 'id, nome, dias, preco_mzn e preco_usdt são obrigatórios.' });
+    }
+
+    const { rows } = await query(`
+      INSERT INTO planos (id, nome, dias, preco_mzn, preco_usdt, periodo, is_popular, ativo)
+      VALUES ($1, $2, $3, $4, $5, $6, COALESCE($7, FALSE), COALESCE($8, TRUE))
+      ON CONFLICT (id) DO UPDATE SET
+        nome = EXCLUDED.nome,
+        dias = EXCLUDED.dias,
+        preco_mzn = EXCLUDED.preco_mzn,
+        preco_usdt = EXCLUDED.preco_usdt,
+        periodo = EXCLUDED.periodo,
+        is_popular = EXCLUDED.is_popular,
+        ativo = EXCLUDED.ativo
+      RETURNING *;
+    `, [id, nome, dias, preco_mzn, preco_usdt, periodo, is_popular, ativo]);
+
+    res.json({ success: true, data: rows[0] });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// -------------------------------------------------------------
+// APIs DE CONFIGURAÇÕES DO SISTEMA (configuracoes)
+// -------------------------------------------------------------
+app.get('/api/configuracoes', async (req, res) => {
+  try {
+    const { rows } = await query('SELECT * FROM configuracoes WHERE id = 1');
+    res.json({ success: true, data: rows[0] || {} });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.post('/api/configuracoes', async (req, res) => {
+  try {
+    const { suporte_link, aviso_admin, versao_minima } = req.body;
+    const { rows } = await query(`
+      INSERT INTO configuracoes (id, suporte_link, aviso_admin, versao_minima)
+      VALUES (1, COALESCE($1, ''), $2, COALESCE($3, '1.0'))
+      ON CONFLICT (id) DO UPDATE SET
+        suporte_link = COALESCE($1, configuracoes.suporte_link),
+        aviso_admin = $2,
+        versao_minima = COALESCE($3, configuracoes.versao_minima)
+      RETURNING *;
+    `, [suporte_link, aviso_admin, versao_minima]);
+
+    res.json({ success: true, data: rows[0] });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// -------------------------------------------------------------
 // HEALTH CHECK & STATUS
 // -------------------------------------------------------------
 app.get('/health', async (req, res) => {
@@ -437,7 +679,7 @@ app.get('/', (req, res) => {
   res.json({
     app: 'AVGPT Backend API',
     status: 'online',
-    version: '1.1.0',
+    version: '1.2.0',
     endpoints: {
       redirect_rota_pone: '/pone (Abre o App Android via avgpt://pagamento-sucesso)',
       webhook_escalapay: '/webhook/escalapay',
@@ -446,6 +688,15 @@ app.get('/', (req, res) => {
       binance_pay: '/api/binance/pay',
       binance_balance: '/api/binance/balance',
       binance_sync: 'POST /api/binance/sync',
+      pagamento_criar: 'POST /api/pagamento/criar',
+      pagamento_verificar: 'POST /api/pagamento/verificar',
+      pagamento_validar_token: 'POST /api/pagamento/validar-token',
+      users_sync: 'POST /api/users/sync',
+      users_get: 'GET /api/users/:deviceId',
+      users_stats: 'POST /api/users/stats',
+      casas: 'GET /api/casas, POST /api/casas',
+      planos: 'GET /api/planos, POST /api/planos',
+      configuracoes: 'GET /api/configuracoes, POST /api/configuracoes',
       payments: '/api/payments',
       health: '/health'
     }

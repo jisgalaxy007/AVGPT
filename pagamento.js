@@ -200,6 +200,43 @@ async function verificarPorTxid(codigo, txid) {
     );
   } catch (_) {}
 
+  // Se o pedido possuir device_id associado, ativa ou estende a validade do usuário
+  let userUpdated = null;
+  const customerInfo = order.customer_info || {};
+  const deviceId = customerInfo.device_id || customerInfo.deviceId;
+  if (deviceId) {
+    try {
+      let diasAdicionar = 15;
+      let nomePlano = customerInfo.plano_nome || 'VIP';
+
+      if (customerInfo.plano_id) {
+        const { rows: planoRows } = await query('SELECT * FROM planos WHERE id = $1', [customerInfo.plano_id]);
+        if (planoRows.length > 0) {
+          diasAdicionar = planoRows[0].dias;
+          nomePlano = planoRows[0].nome;
+        }
+      } else if (customerInfo.dias) {
+        diasAdicionar = parseInt(customerInfo.dias) || 15;
+      }
+
+      const { rows: uRows } = await query(`
+        INSERT INTO users (device_id, user_name, status, plano, validade_ate, total_compras, ultima_vez_online)
+        VALUES ($1, 'Jogador VIP', 'ATIVO', $2, NOW() + ($3 || ' days')::INTERVAL, $4, NOW())
+        ON CONFLICT (device_id) DO UPDATE
+        SET status = 'ATIVO',
+            plano = $2,
+            validade_ate = GREATEST(NOW(), users.validade_ate) + ($3 || ' days')::INTERVAL,
+            total_compras = users.total_compras + $4,
+            ultima_vez_online = NOW()
+        RETURNING *;
+      `, [deviceId, nomePlano, diasAdicionar.toString(), valorRecebido]);
+
+      if (uRows.length > 0) userUpdated = uRows[0];
+    } catch (uErr) {
+      console.warn('[verificarPorTxid] Erro ao atualizar licença do usuário:', uErr.message);
+    }
+  }
+
   return {
     sucesso: true,
     status: 'paid',
@@ -209,6 +246,7 @@ async function verificarPorTxid(codigo, txid) {
     currency: order.currency,
     binance_tx_id: txIdFinal,
     paid_at: new Date().toISOString(),
+    user: userUpdated,
   };
 }
 
