@@ -1,0 +1,15 @@
+{
+  "name": "avgpt-binance-proxy",
+  "version": "1.0.0",
+  "description": "Proxy Binance API para AVGPT - contorna restrição geográfica (jnb -> gru)",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.21.2"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

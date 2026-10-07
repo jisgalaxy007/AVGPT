@@ -2,6 +2,7 @@ require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const { pool, query, initDatabase } = require('./db');
+const binance = require('./binance');
 
 const app = express();
 const PORT = process.env.PORT || 8080;
@@ -150,7 +151,7 @@ function generateSuccessPage(req) {
 }
 
 // -------------------------------------------------------------
-// ROTA PRINCIPAL SOLICITADA: /pone
+// ROTA PRINCIPAL: /pone
 // (Também disponível em /pagamento-sucesso, /retorno, /payment-success)
 // -------------------------------------------------------------
 const handlePaymentSuccessRedirect = (req, res) => {
@@ -195,7 +196,85 @@ app.post('/webhook/escalapay', async (req, res) => {
 });
 
 // -------------------------------------------------------------
-// APIs ADICIONAIS: Consulta e Listagem de Pagamentos
+// ROTAS BINANCE: Leitura de pagamentos, depósitos e saldos
+// -------------------------------------------------------------
+
+// 1. Depósitos Cripto Recebidos (USDT, BTC, etc.)
+app.get('/api/binance/deposits', async (req, res) => {
+  try {
+    const { coin, status, limit } = req.query;
+    const deposits = await binance.getDepositHistory({
+      coin,
+      status: status !== undefined ? parseInt(status) : undefined,
+      limit: limit ? parseInt(limit) : 50,
+    });
+    res.json({ success: true, count: deposits.length, data: deposits });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// 2. Depósitos Fiat Recebidos (PIX, BRL, etc.)
+app.get('/api/binance/fiat', async (req, res) => {
+  try {
+    const orders = await binance.getFiatOrders(req.query);
+    res.json({ success: true, data: orders });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// 3. Transações Binance Pay
+app.get('/api/binance/pay', async (req, res) => {
+  try {
+    const payHistory = await binance.getPayHistory(req.query);
+    res.json({ success: true, count: payHistory.length, data: payHistory });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// 4. Saldos da Carteira
+app.get('/api/binance/balance', async (req, res) => {
+  try {
+    const balances = await binance.getAccountBalances();
+    res.json({ success: true, data: balances });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// 5. Sincronizar depósitos da Binance para o banco PostgreSQL
+app.post('/api/binance/sync', async (req, res) => {
+  try {
+    const deposits = await binance.getDepositHistory({ limit: 50 });
+    let synced = 0;
+
+    for (const d of deposits) {
+      const txId = d.txId || `binance_${d.id}`;
+      const amount = parseFloat(d.amount);
+      const coin = d.coin;
+      const status = d.status === 1 ? 'paid' : d.status === 0 ? 'pending' : 'credited';
+
+      if (process.env.DATABASE_URL) {
+        await query(`
+          INSERT INTO payments (transaction_id, customer_email, amount, currency, status, gateway, payload, updated_at)
+          VALUES ($1, $2, $3, $4, $5, 'binance', $6, NOW())
+          ON CONFLICT (transaction_id)
+          DO UPDATE SET status = EXCLUDED.status, payload = EXCLUDED.payload, updated_at = NOW();
+        `, [txId, d.address || null, amount, coin, status, JSON.stringify(d)]);
+        synced++;
+      }
+    }
+
+    res.json({ success: true, message: `${synced} pagamentos/depósitos Binance sincronizados.`, totalDeposits: deposits.length });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// -------------------------------------------------------------
+// APIs DE PAGAMENTOS
 // -------------------------------------------------------------
 app.get('/api/payments', async (req, res) => {
   try {
@@ -220,7 +299,7 @@ app.get('/api/payments/:transactionId', async (req, res) => {
 });
 
 // -------------------------------------------------------------
-// ROTA HEALTH CHECK & STATUS
+// HEALTH CHECK & STATUS
 // -------------------------------------------------------------
 app.get('/health', async (req, res) => {
   let dbStatus = 'disconnected';
@@ -235,6 +314,7 @@ app.get('/health', async (req, res) => {
     status: 'ok',
     app: 'AVGPT',
     database: dbStatus,
+    binance: !!process.env.BINANCE_API_KEY ? 'configured' : 'missing',
     timestamp: new Date().toISOString()
   });
 });
@@ -243,12 +323,17 @@ app.get('/', (req, res) => {
   res.json({
     app: 'AVGPT Backend API',
     status: 'online',
-    version: '1.0.0',
+    version: '1.1.0',
     endpoints: {
       redirect_rota_pone: '/pone (Abre o App Android via avgpt://pagamento-sucesso)',
       webhook_escalapay: '/webhook/escalapay',
-      health: '/health',
-      payments: '/api/payments'
+      binance_deposits: '/api/binance/deposits',
+      binance_fiat: '/api/binance/fiat',
+      binance_pay: '/api/binance/pay',
+      binance_balance: '/api/binance/balance',
+      binance_sync: 'POST /api/binance/sync',
+      payments: '/api/payments',
+      health: '/health'
     }
   });
 });
@@ -258,6 +343,7 @@ app.listen(PORT, '0.0.0.0', async () => {
   console.log(`=========================================`);
   console.log(`AVGPT Backend iniciado na porta ${PORT}`);
   console.log(`Rota de redirecionamento: http://localhost:${PORT}/pone`);
+  console.log(`Binance API configurada: ${!!process.env.BINANCE_API_KEY}`);
   console.log(`=========================================`);
   await initDatabase();
 });

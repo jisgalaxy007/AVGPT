@@ -11,6 +11,12 @@ Backend oficial do **AVGPT** hospedado no Fly.io (Johannesburg `jnb`) com Postgr
 3. **Deep Linking Android**: Esquema customizado `avgpt://pagamento-sucesso`
 4. **Rota Solicitada**: `/pone` (e aliases `/pagamento-sucesso`, `/retorno`)
 5. **Webhook EscalaPay**: `/webhook/escalapay` para salvar transações e atualizar status no banco
+6. **Integração Binance (Leitura de Pagamentos)**:
+   - Depósitos Cripto: `GET /api/binance/deposits`
+   - Depósitos Fiat (BRL/PIX): `GET /api/binance/fiat`
+   - Transações Binance Pay: `GET /api/binance/pay`
+   - Saldos da Carteira: `GET /api/binance/balance`
+   - Sincronização automática para o Postgres: `POST /api/binance/sync`
 
 ---
 
