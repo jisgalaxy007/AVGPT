@@ -236,7 +236,40 @@ app.get('/api/binance/pay', async (req, res) => {
   }
 });
 
-// 4. Saldos da Carteira
+// 4. Saques / Transferências
+app.get('/api/binance/withdraws', async (req, res) => {
+  try {
+    const withdraws = await binance.getWithdrawHistory(req.query);
+    res.json({ success: true, count: withdraws.length, data: withdraws });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// 5. Histórico Completo de Transações da Binance (Depósitos + Saques + Pay)
+app.get('/api/binance/historico-completo', async (req, res) => {
+  try {
+    const [deposits, withdraws, pay, balances] = await Promise.allSettled([
+      binance.getDepositHistory(),
+      binance.getWithdrawHistory(),
+      binance.getPayHistory(),
+      binance.getAccountBalances(),
+    ]);
+
+    res.json({
+      success: true,
+      depositos: deposits.status === 'fulfilled' ? deposits.value : [],
+      saques_transferencias: withdraws.status === 'fulfilled' ? withdraws.value : [],
+      binance_pay: pay.status === 'fulfilled' ? pay.value : [],
+      saldos: balances.status === 'fulfilled' ? balances.value : null,
+      timestamp: new Date().toISOString(),
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// 6. Saldos da Carteira
 app.get('/api/binance/balance', async (req, res) => {
   try {
     const balances = await binance.getAccountBalances();
@@ -246,7 +279,7 @@ app.get('/api/binance/balance', async (req, res) => {
   }
 });
 
-// 5. Sincronizar depósitos da Binance para o banco PostgreSQL
+// 7. Sincronizar depósitos da Binance para o banco PostgreSQL
 app.post('/api/binance/sync', async (req, res) => {
   try {
     const deposits = await binance.getDepositHistory({ limit: 50 });
@@ -276,20 +309,14 @@ app.post('/api/binance/sync', async (req, res) => {
 });
 
 // -------------------------------------------------------------
-// ROTAS DE PEDIDO E VERIFICAÇÃO DE PAGAMENTO BINANCE PAY
+// ROTAS DE PEDIDO E VERIFICAÇÃO DE PAGAMENTO BINANCE PAY / CRIPTO
 // ============================================================
-// FLUXO CORRETO:
-//   1. App: POST /api/pagamento/criar      → recebe código único + valor a pagar
-//   2. Cliente: paga no Binance Pay
-//   3. Binance gera um TXID para o cliente
-//   4. App: POST /api/pagamento/verificar  { codigo, txid }
-//            → backend busca esse TXID específico na Binance
-//            → verifica valor
-//            → verifica se TXID já foi usado antes
-//            → se OK → retorna access_token e libera acesso no app
+// FLUXO UNIVERSAL:
+//   O cliente cola apenas o TXID / Hash e o device_id (igual ao e-Mola / M-Pesa!).
+//   Opcionalmente, pode enviar também o código de pedido (codigo).
 // -------------------------------------------------------------
 
-// 1. CRIAR PEDIDO
+// 1. CRIAR PEDIDO (Opcional)
 app.post('/api/pagamento/criar', async (req, res) => {
   try {
     const { amount, currency, descricao, customerInfo } = req.body;
@@ -315,29 +342,30 @@ app.get('/api/pagamento/:codigo', async (req, res) => {
   }
 });
 
-// 3. VERIFICAR PAGAMENTO VIA TXID (o cliente cola o TXID que a Binance gerou)
-//    Body: { codigo: "AVGPT-X7K2", txid: "1234567890ABCDEF..." }
+// 3. VERIFICAR PAGAMENTO VIA TXID (Modo Universal: Direto ou com Código)
+//    Body: { txid: "0x...", device_id: "DEV-..." } OU { codigo: "AVGPT-...", txid: "..." }
 app.post('/api/pagamento/verificar', async (req, res) => {
   try {
-    const { codigo, txid } = req.body;
+    const txid = req.body.txid || req.body.tx_id || req.body.hash || req.body.comprovativo;
+    const codigo = req.body.codigo || null;
+    const deviceId = req.body.device_id || req.body.deviceId || null;
 
-    if (!codigo || !txid) {
+    if (!txid) {
       return res.status(400).json({
         success: false,
-        error: 'Informe o código do pedido (codigo) e o TXID da transação Binance (txid).',
+        error: 'Informe o TXID / Hash da transação Binance (txid).',
       });
     }
 
-    const resultado = await verificarPorTxid(codigo, txid.trim());
+    const resultado = await verificarPorTxid({ codigo, txid, deviceId });
 
     const httpStatus = resultado.sucesso ? 200
-      : resultado.status === 'not_found' ? 404
+      : resultado.status === 'txid_not_found' ? 404
       : resultado.status === 'txid_already_used' ? 409
-      : resultado.status === 'wrong_amount' ? 422
-      : resultado.status === 'expired' ? 410
-      : 202; // pending / not found yet
+      : resultado.status === 'valor_invalido' ? 422
+      : 400;
 
-    res.status(httpStatus).json({ success: resultado.sucesso, ...resultado });
+    res.status(httpStatus).json(resultado);
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
