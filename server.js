@@ -246,19 +246,46 @@ app.get('/api/binance/withdraws', async (req, res) => {
   }
 });
 
-// 5. Histórico Completo de Transações da Binance (Depósitos + Saques + Pay)
+// 5. Ordens P2P / C2C (Compras e Vendas P2P em Moeda Local MZN)
+app.get('/api/binance/p2p', async (req, res) => {
+  try {
+    const [p2pBuy, p2pSell] = await Promise.allSettled([
+      binance.getP2POrders({ tradeType: 'BUY', ...req.query }),
+      binance.getP2POrders({ tradeType: 'SELL', ...req.query }),
+    ]);
+
+    const ordens = [
+      ...(p2pBuy.status === 'fulfilled' && Array.isArray(p2pBuy.value) ? p2pBuy.value : []),
+      ...(p2pSell.status === 'fulfilled' && Array.isArray(p2pSell.value) ? p2pSell.value : []),
+    ];
+
+    res.json({ success: true, count: ordens.length, data: ordens });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// 6. Histórico Completo de Transações da Binance (P2P + Depósitos + Saques + Pay)
 app.get('/api/binance/historico-completo', async (req, res) => {
   try {
-    const [deposits, withdraws, pay, balances] = await Promise.allSettled([
+    const [deposits, withdraws, pay, p2pBuy, p2pSell, balances] = await Promise.allSettled([
       binance.getDepositHistory(),
       binance.getWithdrawHistory(),
       binance.getPayHistory(),
+      binance.getP2POrders({ tradeType: 'BUY' }),
+      binance.getP2POrders({ tradeType: 'SELL' }),
       binance.getAccountBalances(),
     ]);
 
+    const ordensP2p = [
+      ...(p2pBuy.status === 'fulfilled' && Array.isArray(p2pBuy.value) ? p2pBuy.value : []),
+      ...(p2pSell.status === 'fulfilled' && Array.isArray(p2pSell.value) ? p2pSell.value : []),
+    ];
+
     res.json({
       success: true,
-      depositos: deposits.status === 'fulfilled' ? deposits.value : [],
+      p2p_c2c: ordensP2p,
+      depositos_onchain: deposits.status === 'fulfilled' ? deposits.value : [],
       saques_transferencias: withdraws.status === 'fulfilled' ? withdraws.value : [],
       binance_pay: pay.status === 'fulfilled' ? pay.value : [],
       saldos: balances.status === 'fulfilled' ? balances.value : null,

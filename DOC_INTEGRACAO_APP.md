@@ -145,61 +145,50 @@ Se o valor pago for diferente dos pacotes cadastrados (ex: cliente transferiu 1 
 
 ---
 
-## 💎 Fluxo 3: Pagamentos Cripto (Binance Pay - USDT)
+## 💎 Fluxo 3: Pagamentos Cripto & Binance (USDT e P2P)
 
-### Passo 1: Criar Pedido
-Quando o usuário escolhe pagar via Binance Pay:
+O cliente pode pagar por qualquer método da Binance:
+- **Binance P2P**: Compra USDT via e-Mola / M-Pesa / Conta Bancária e copia o **Número da Ordem** (ex: `22940163959255494656`).
+- **Binance Pay / Carteira (BSC/Tron)**: Envia USDT e copia o **Hash / TXID** da transação (ex: `0x16add031...`).
 
-- **Endpoint**: `POST /api/pagamento/criar`
+### Endpoint Universal: `POST /api/pagamento/verificar`
+O cliente **não precisa criar pedido prévio**: basta colar o TXID / Hash ou Número da Ordem P2P e o `device_id`:
+
 - **Body**:
 ```json
 {
-  "amount": 15.55,
-  "currency": "USDT",
-  "descricao": "15 Dias VIP",
-  "customerInfo": {
-    "device_id": "DEV-4A7B8C9D",
-    "plano_id": "plano_15d"
-  }
-}
-```
-- **Resposta**:
-```json
-{
-  "success": true,
-  "data": {
-    "codigo": "AVGPT-4KALF9",
-    "amount": 15.55,
-    "currency": "USDT",
-    "instrucao": "Pague 15.5500 USDT via Binance Pay. Após pagar, copie o TXID gerado pela Binance e cole no aplicativo para confirmar."
-  }
+  "device_id": "DEV-4A7B8C9D",
+  "txid": "22940163959255494656"
 }
 ```
 
-### Passo 2: Validar o TXID da Binance
-O cliente realiza a transferência na Binance e cola o **TXID**:
+### 🧠 Regra de Cálculo Flexível e Proporcional:
+- **Se o valor for maior ou igual a um pacote (+/-)**:
+  - `>= 21.00 USDT` (ou 850 MT): **30 Dias VIP**
+  - `>= 14.50 USDT` (ou 700 MT): **15 Dias VIP**
+  - `>= 11.00 USDT` (ou 500 MT): **7 Dias VIP**
+  - `>= 5.00 USDT` (ou 300 MT): **1 Dia VIP** com horas extras proporcionais (ex: 7.08 USDT = 28 horas de acesso!).
+- **Se o valor for menor que 1 pacote diário (ex: 1 USDT a 4.99 USDT)**:
+  - O sistema **corta proporcionalmente em HORAS VIP** (taxa base: 6.00 USDT = 24 horas)!
+  - Exemplo: 2.99 USDT = **12 Horas VIP** ativadas na hora!
 
-- **Endpoint**: `POST /api/pagamento/verificar`
-- **Body**:
-```json
-{
-  "codigo": "AVGPT-4KALF9",
-  "txid": "9876543210ABCDEF"
-}
-```
-- **Resposta**:
+#### Resposta de Sucesso (HTTP 200):
 ```json
 {
   "sucesso": true,
   "status": "paid",
-  "mensagem": "✅ Pagamento confirmado! Acesso liberado.",
+  "mensagem": "🎉 Pagamento de 7.08 USDT confirmado via Binance (saque_transferencia)! O acesso \"1 Dia(s) VIP\" (28 horas) foi ativado com sucesso!",
   "access_token": "a1b2c3d4e5f6...",
-  "amount_confirmado": 15.55,
+  "amount_confirmado": 7.08,
+  "currency": "USDT",
+  "binance_tx_id": "0x16add0314fc02f449ce72e91da33ad5f2e9a1b37b1602d8822b515052e636466",
+  "horas_adicionadas": 28,
+  "validade_ate": "2026-10-09T01:50:02.392Z",
   "user": {
     "device_id": "DEV-4A7B8C9D",
     "status": "ATIVO",
-    "plano": "15 Dias VIP",
-    "validade_ate": "2026-11-06T19:25:47.890Z"
+    "plano": "1 Dia(s) VIP",
+    "validade_ate": "2026-10-09T01:50:02.392Z"
   }
 }
 ```
