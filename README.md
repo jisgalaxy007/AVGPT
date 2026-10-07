@@ -155,12 +155,28 @@ As tabelas são criadas e migradas automaticamente ao iniciar o backend:
 
 ## 🇲🇿 Fluxo Automatizado e-Mola & M-Pesa (SMS Gateway)
 
-1. **Recepção do SMS**: O celular com o chip receptor recebe a notificação da operadora e o app gateway envia para:
-   - `POST https://avgpt.fly.dev/api/mobile/webhook` com `{ "message": "ID Trans: PP..." }`
-   - O backend extrai o ID e o valor e salva com status `RECEBIDO`.
-2. **Resgate pelo Cliente**: O cliente transfere o dinheiro e cola a mensagem de confirmação no app AVGPT:
-   - `POST https://avgpt.fly.dev/api/mobile/resgatar` com `{ "device_id": "DEV-...", "comprovativo": "..." }`
-   - O backend extrai o TXID, verifica se existe, se não foi usado anteriormente, identifica o plano pelo valor em MT, marca como `USADO` e estende a validade do usuário instantaneamente!
+### 📲 Especificações da Requisição do App Android Gateway:
+
+- **Cabeçalho Obrigatório**:
+  ```http
+  x-api-key: emola-secret-key-2026
+  Content-Type: application/json
+  ```
+- **Corpo da Requisição (JSON)**:
+  ```json
+  {
+    "sms": "Texto completo do SMS recebido",
+    "phone": "Número de quem enviou o SMS (se disponível)"
+  }
+  ```
+- **Rotas Suportadas** (qualquer uma pode ser configurada no app):
+  - `POST https://avgpt.fly.dev/api/mobile/webhook`
+  - `POST https://avgpt.fly.dev/api/sms`
+  - `POST https://avgpt.fly.dev/api/sms/webhook`
+  - `POST https://avgpt.fly.dev/webhook/sms`
+  - `POST https://avgpt.fly.dev/webhook/emola`
+  - `POST https://avgpt.fly.dev/webhook/mpesa`
+  - `POST https://avgpt.fly.dev/sms`
 
 ---
 

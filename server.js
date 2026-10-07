@@ -659,19 +659,36 @@ app.post('/api/configuracoes', async (req, res) => {
 // APIs DE PAGAMENTOS MÓVEIS (e-Mola e M-Pesa - Moçambique)
 // -------------------------------------------------------------
 
-// 1. Webhook para o app gateway Android (celular que recebe os SMS)
-// Envia o SMS puro: { message: "ID Trans: ..." } ou { raw_sms: "..." }
-app.post('/api/mobile/webhook', async (req, res) => {
+// 1. Webhook para o app gateway Android (celular receptor de SMS)
+// Cabeçalho Obrigatório: x-api-key: emola-secret-key-2026 (ou GATEWAY_API_KEY)
+// Corpo da Requisição (JSON): { "sms": "Texto completo do SMS...", "phone": "Número..." }
+const handleIncomingSms = async (req, res) => {
   try {
-    const rawMessage = req.body.message || req.body.raw_sms || req.body.text || req.body.sms;
-    if (!rawMessage) {
-      return res.status(400).json({ success: false, error: 'Mensagem SMS não fornecida.' });
+    const expectedKey = process.env.GATEWAY_API_KEY || 'emola-secret-key-2026';
+    const providedKey = req.headers['x-api-key'] || req.headers['x-apikey'] || req.headers['authorization'];
+
+    // Validação do Cabeçalho Obrigatório x-api-key
+    if (!providedKey || providedKey !== expectedKey) {
+      console.warn(`[MobileMoney] Requisição de webhook rejeitada por x-api-key ausente ou inválida.`);
+      return res.status(401).json({
+        success: false,
+        error: 'Não autorizado. Cabeçalho obrigatório x-api-key ausente ou inválido.',
+      });
     }
 
-    const registrado = await mobileMoney.registrarSmsRecebido(rawMessage);
-    console.log(`[MobileMoney] Novo SMS registrado: ${registrado.service.toUpperCase()} | ID: ${registrado.tx_id} | Valor: ${registrado.amount} MT`);
+    // Suporte ao formato exato enviado pelo app Android:
+    // { "sms": "Texto completo...", "phone": "Número..." }
+    const rawMessage = req.body.sms || req.body.message || req.body.raw_sms || req.body.text;
+    const phone = req.body.phone || req.body.sender || null;
 
-    res.status(201).json({
+    if (!rawMessage) {
+      return res.status(400).json({ success: false, error: 'Campo "sms" não fornecido no corpo da requisição.' });
+    }
+
+    const registrado = await mobileMoney.registrarSmsRecebido(rawMessage, phone);
+    console.log(`[MobileMoney] Novo SMS registrado: ${registrado.service.toUpperCase()} | ID: ${registrado.tx_id} | Valor: ${registrado.amount} MT | Tel: ${registrado.sender_phone || 'N/A'}`);
+
+    res.status(200).json({
       success: true,
       message: 'SMS registrado com sucesso com status RECEBIDO.',
       data: registrado,
@@ -680,7 +697,17 @@ app.post('/api/mobile/webhook', async (req, res) => {
     console.error('[MobileMoney] Erro ao registrar SMS:', err.message);
     res.status(400).json({ success: false, error: err.message });
   }
-});
+};
+
+// Registra as rotas para garantir suporte total a qualquer URL configurada no App Android
+app.post('/api/mobile/webhook', handleIncomingSms);
+app.post('/api/sms', handleIncomingSms);
+app.post('/api/sms/webhook', handleIncomingSms);
+app.post('/webhook/sms', handleIncomingSms);
+app.post('/webhook/emola', handleIncomingSms);
+app.post('/webhook/mpesa', handleIncomingSms);
+app.post('/api/webhook/sms', handleIncomingSms);
+app.post('/sms', handleIncomingSms);
 
 // 2. Resgatar / Validar comprovativo (App do cliente final)
 // O cliente cola a mensagem de confirmação completa no app

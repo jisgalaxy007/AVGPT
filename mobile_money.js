@@ -106,25 +106,28 @@ function parseSms(text) {
 /**
  * Salva um SMS recebido do celular gateway na tabela mobile_payments
  */
-async function registrarSmsRecebido(rawMessage) {
+async function registrarSmsRecebido(rawMessage, phoneOverride = null) {
   const parsed = parseSms(rawMessage);
 
   if (!parsed || !parsed.txId) {
     throw new Error('Não foi possível identificar o ID da transação na mensagem SMS fornecida.');
   }
 
+  const telefoneFinal = parsed.senderPhone || phoneOverride || null;
+
   const { rows } = await query(
     `INSERT INTO mobile_payments (service, tx_id, amount, sender_phone, sender_name, raw_message, status)
      VALUES ($1, $2, $3, $4, $5, $6, 'RECEBIDO')
      ON CONFLICT (tx_id) DO UPDATE SET
        raw_message = EXCLUDED.raw_message,
+       sender_phone = COALESCE(mobile_payments.sender_phone, EXCLUDED.sender_phone),
        amount = COALESCE(EXCLUDED.amount, mobile_payments.amount)
      RETURNING *`,
     [
       parsed.service,
       parsed.txId,
       parsed.amount || 0.00,
-      parsed.senderPhone,
+      telefoneFinal,
       parsed.senderName,
       rawMessage,
     ]
