@@ -46,6 +46,27 @@ async function initDatabase() {
       );
     `);
 
+    // Tabela de ordens de pagamento Binance Pay
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS orders (
+        id SERIAL PRIMARY KEY,
+        codigo VARCHAR(50) UNIQUE NOT NULL,
+        amount NUMERIC(10, 4) NOT NULL,
+        currency VARCHAR(10) NOT NULL DEFAULT 'USDT',
+        descricao TEXT,
+        customer_id VARCHAR(255),
+        customer_info JSONB,
+        status VARCHAR(30) DEFAULT 'pending',
+        binance_tx_id VARCHAR(255),
+        binance_payload JSONB,
+        access_token VARCHAR(255),
+        expires_at TIMESTAMP WITH TIME ZONE,
+        paid_at TIMESTAMP WITH TIME ZONE,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+        updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+      );
+    `);
+
     console.log('Tabelas inicializadas com sucesso.');
   } catch (err) {
     console.error('Erro ao inicializar tabelas no banco de dados:', err);

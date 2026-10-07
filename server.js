@@ -3,6 +3,7 @@ const express = require('express');
 const cors = require('cors');
 const { pool, query, initDatabase } = require('./db');
 const binance = require('./binance');
+const { criarPedido, buscarPedido, verificarPorTxid } = require('./pagamento');
 
 const app = express();
 const PORT = process.env.PORT || 8080;
@@ -274,6 +275,118 @@ app.post('/api/binance/sync', async (req, res) => {
 });
 
 // -------------------------------------------------------------
+// ROTAS DE PEDIDO E VERIFICAÇÃO DE PAGAMENTO BINANCE PAY
+// ============================================================
+// FLUXO CORRETO:
+//   1. App: POST /api/pagamento/criar      → recebe código único + valor a pagar
+//   2. Cliente: paga no Binance Pay
+//   3. Binance gera um TXID para o cliente
+//   4. App: POST /api/pagamento/verificar  { codigo, txid }
+//            → backend busca esse TXID específico na Binance
+//            → verifica valor
+//            → verifica se TXID já foi usado antes
+//            → se OK → retorna access_token e libera acesso no app
+// -------------------------------------------------------------
+
+// 1. CRIAR PEDIDO
+app.post('/api/pagamento/criar', async (req, res) => {
+  try {
+    const { amount, currency, descricao, customerInfo } = req.body;
+    if (!amount) {
+      return res.status(400).json({ success: false, error: 'Informe o valor (amount) do pagamento.' });
+    }
+    const pedido = await criarPedido({ amount, currency, descricao, customerInfo });
+    res.json({ success: true, data: pedido });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// 2. CONSULTAR STATUS DO PEDIDO
+app.get('/api/pagamento/:codigo', async (req, res) => {
+  try {
+    const pedido = await buscarPedido(req.params.codigo);
+    if (!pedido) return res.status(404).json({ success: false, error: 'Pedido não encontrado.' });
+    const { access_token, binance_payload, ...safe } = pedido;
+    res.json({ success: true, data: safe });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// 3. VERIFICAR PAGAMENTO VIA TXID (o cliente cola o TXID que a Binance gerou)
+//    Body: { codigo: "AVGPT-X7K2", txid: "1234567890ABCDEF..." }
+app.post('/api/pagamento/verificar', async (req, res) => {
+  try {
+    const { codigo, txid } = req.body;
+
+    if (!codigo || !txid) {
+      return res.status(400).json({
+        success: false,
+        error: 'Informe o código do pedido (codigo) e o TXID da transação Binance (txid).',
+      });
+    }
+
+    const resultado = await verificarPorTxid(codigo, txid.trim());
+
+    const httpStatus = resultado.sucesso ? 200
+      : resultado.status === 'not_found' ? 404
+      : resultado.status === 'txid_already_used' ? 409
+      : resultado.status === 'wrong_amount' ? 422
+      : resultado.status === 'expired' ? 410
+      : 202; // pending / not found yet
+
+    res.status(httpStatus).json({ success: resultado.sucesso, ...resultado });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// 4. VALIDAR ACCESS TOKEN (app verifica se o token ainda é válido em sessões futuras)
+//    Body: { access_token: "abc123..." }
+app.post('/api/pagamento/validar-token', async (req, res) => {
+  try {
+    const { access_token } = req.body;
+    if (!access_token) {
+      return res.status(400).json({ success: false, error: 'Token não informado.' });
+    }
+
+    const { rows } = await query(
+      `SELECT codigo, amount, currency, descricao, paid_at, binance_tx_id
+       FROM orders WHERE access_token = $1 AND status = 'paid'`,
+      [access_token]
+    );
+
+    if (rows.length === 0) {
+      return res.status(401).json({ success: false, error: 'Token inválido ou pagamento não confirmado.' });
+    }
+
+    res.json({
+      success: true,
+      acesso: true,
+      mensagem: '✅ Token válido. Acesso liberado.',
+      pedido: rows[0],
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// 5. LISTAR PEDIDOS (admin)
+app.get('/api/pagamento', async (req, res) => {
+  try {
+    const { rows } = await query(
+      `SELECT codigo, amount, currency, descricao, status, binance_tx_id, paid_at, created_at, expires_at
+       FROM orders ORDER BY created_at DESC LIMIT 100`
+    );
+    res.json({ success: true, count: rows.length, data: rows });
+  } catch (err) {
+
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// -------------------------------------------------------------
 // APIs DE PAGAMENTOS
 // -------------------------------------------------------------
 app.get('/api/payments', async (req, res) => {
@@ -297,6 +410,7 @@ app.get('/api/payments/:transactionId', async (req, res) => {
     res.status(500).json({ success: false, error: err.message });
   }
 });
+
 
 // -------------------------------------------------------------
 // HEALTH CHECK & STATUS
