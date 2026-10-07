@@ -27,51 +27,42 @@ function gerarAccessToken() {
 }
 
 /**
- * Calcula os dias/horas de acesso de forma flexível e proporcional
+ * Calcula os dias/horas de acesso de forma 100% DINÂMICA com base na tabela planos do banco de dados!
+ * Se o administrador aumentar, diminuir ou adicionar pacotes, o cálculo recalcula automaticamente.
  */
-function calcularAcessoFlexivel({ valorUsdt = 0, valorMzn = 0 }) {
-  // Preços de referência oficiais:
-  // 30 Dias: 22.32 USDT | 899 MT
-  // 15 Dias: 15.55 USDT | 799 MT
-  //  7 Dias: 12.22 USDT | 555 MT
-  //  1 Dia:   6.00 USDT | 350 MT (~0.25 USDT/hora)
+function calcularAcessoFlexivel({ valorUsdt = 0, valorMzn = 0, planos = [] }) {
+  if (!Array.isArray(planos) || planos.length === 0) return null;
 
   // 1. Caso com valor em USDT (Depósitos, Binance Pay, Saques, P2P)
   if (valorUsdt > 0) {
-    if (valorUsdt >= 21.00) {
-      // 30 Dias ou proporcional se for maior
-      const dias = Math.max(30, Math.floor((valorUsdt / 22.32) * 30));
-      return {
-        nomePlano: `${dias} Dias VIP`,
-        dias: dias,
-        horas: dias * 24,
-      };
-    } else if (valorUsdt >= 14.50) {
-      // 15 Dias (+/-)
-      return {
-        nomePlano: '15 Dias VIP',
-        dias: 15,
-        horas: 15 * 24,
-      };
-    } else if (valorUsdt >= 11.00) {
-      // 7 Dias (+/-)
-      return {
-        nomePlano: '7 Dias VIP',
-        dias: 7,
-        horas: 7 * 24,
-      };
-    } else if (valorUsdt >= 5.00) {
-      // 1 Dia completo (+/-) com horas extras proporcionais (ex: 7.08 USDT = 28 horas)
-      const horasTotais = Math.round((valorUsdt / 6.00) * 24);
-      const dias = Math.floor(horasTotais / 24);
-      return {
-        nomePlano: dias >= 1 ? `${dias} Dia(s) VIP` : `${horasTotais} Horas VIP`,
-        dias: dias,
-        horas: horasTotais,
-      };
-    } else if (valorUsdt >= 0.50) {
-      // Menor que 1 pacote (ex: 1 USDT, 2.99 USDT, 3 USDT): corta em horas!
-      const horas = Math.max(1, Math.round((valorUsdt / 6.00) * 24));
+    // Ordena do plano mais caro para o mais barato
+    const planosOrdenados = [...planos].sort((a, b) => parseFloat(b.preco_usdt) - parseFloat(a.preco_usdt));
+    const menorPlano = planosOrdenados[planosOrdenados.length - 1];
+    const precoMenorPlano = parseFloat(menorPlano.preco_usdt);
+
+    // Percorre do maior plano para o menor
+    for (const p of planosOrdenados) {
+      const precoP = parseFloat(p.preco_usdt);
+      // Tolerância de +/- 8% para cobrir variações de taxas de rede
+      const precoComTolerancia = precoP * 0.92;
+
+      if (valorUsdt >= precoComTolerancia) {
+        // Se o valor for maior que o pacote, calcula horas/dias proporcionais
+        const diasCalculados = Math.max(p.dias, Math.floor((valorUsdt / precoP) * p.dias));
+        const horasCalculadas = Math.round((valorUsdt / precoP) * (p.dias * 24));
+        return {
+          nomePlano: diasCalculados >= 1 ? `${diasCalculados} Dia(s) VIP` : `${horasCalculadas} Horas VIP`,
+          dias: diasCalculados,
+          horas: horasCalculadas,
+        };
+      }
+    }
+
+    // Se for menor que o plano mais barato ativo (ex: menor é 1 dia, e o cliente enviou fração menor):
+    // Corta proporcionalmente em HORAS com base no menor plano cadastrado!
+    if (precoMenorPlano > 0 && valorUsdt >= 0.50) {
+      const taxaPorHora = precoMenorPlano / (menorPlano.dias * 24);
+      const horas = Math.max(1, Math.round(valorUsdt / taxaPorHora));
       return {
         nomePlano: `${horas} Horas VIP`,
         dias: 0,
@@ -80,21 +71,36 @@ function calcularAcessoFlexivel({ valorUsdt = 0, valorMzn = 0 }) {
     }
   }
 
-  // 2. Caso com valor em MZN/MT (Ordens P2P em moeda local)
+  // 2. Caso com valor em MZN/MT (Ordens P2P da Binance em moeda local)
   if (valorMzn > 0) {
-    if (valorMzn >= 850) {
-      return { nomePlano: '30 Dias VIP', dias: 30, horas: 30 * 24 };
-    } else if (valorMzn >= 700) {
-      return { nomePlano: '15 Dias VIP', dias: 15, horas: 15 * 24 };
-    } else if (valorMzn >= 500) {
-      return { nomePlano: '7 Dias VIP', dias: 7, horas: 7 * 24 };
-    } else if (valorMzn >= 300) {
-      const horas = Math.round((valorMzn / 350) * 24);
-      return { nomePlano: '1 Dia VIP', dias: 1, horas: horas };
-    } else if (valorMzn >= 20) {
-      // Menor que 1 pacote em MT: corta em horas!
-      const horas = Math.max(1, Math.round((valorMzn / 350) * 24));
-      return { nomePlano: `${horas} Horas VIP`, dias: 0, horas: horas };
+    const planosOrdenadosMzn = [...planos].sort((a, b) => parseFloat(b.preco_mzn) - parseFloat(a.preco_mzn));
+    const menorPlanoMzn = planosOrdenadosMzn[planosOrdenadosMzn.length - 1];
+    const precoMenorMzn = parseFloat(menorPlanoMzn.preco_mzn);
+
+    for (const p of planosOrdenadosMzn) {
+      const precoP = parseFloat(p.preco_mzn);
+      const precoComTolerancia = precoP * 0.95; // 5% de tolerância
+
+      if (valorMzn >= precoComTolerancia) {
+        const diasCalculados = Math.max(p.dias, Math.floor((valorMzn / precoP) * p.dias));
+        const horasCalculadas = Math.round((valorMzn / precoP) * (p.dias * 24));
+        return {
+          nomePlano: diasCalculados >= 1 ? `${diasCalculados} Dia(s) VIP` : `${horasCalculadas} Horas VIP`,
+          dias: diasCalculados,
+          horas: horasCalculadas,
+        };
+      }
+    }
+
+    // Menor que o plano mais barato em MT: corta em horas!
+    if (precoMenorMzn > 0 && valorMzn >= 20.00) {
+      const taxaPorHora = precoMenorMzn / (menorPlanoMzn.dias * 24);
+      const horas = Math.max(1, Math.round(valorMzn / taxaPorHora));
+      return {
+        nomePlano: `${horas} Horas VIP`,
+        dias: 0,
+        horas: horas,
+      };
     }
   }
 
@@ -190,11 +196,32 @@ async function verificarPorTxid({ codigo = null, txid, deviceId = null }) {
   const valorPagoMzn = parseFloat(txEncontrada.totalPriceFiat || 0);
 
   // ----------------------------------------------------
-  // Passo 3: Cálculo Flexível de Pacote (+/- e corte em horas)
+  // Passo 3: Buscar Planos Ativos e Cálculo Flexível de Pacote (+/- e corte em horas)
   // ----------------------------------------------------
+  let planos = [];
+  try {
+    const { rows } = await query(
+      `SELECT * FROM planos WHERE ativo = true ORDER BY dias ASC`
+    );
+    planos = rows;
+  } catch (err) {
+    console.error('Erro ao consultar tabela planos no banco:', err.message);
+  }
+
+  // Fallback de segurança se a tabela estiver momentaneamente indisponível
+  if (!planos || planos.length === 0) {
+    planos = [
+      { id: 'plano_1d', nome: '1 Dia VIP', dias: 1, preco_mzn: 350, preco_usdt: 6.00 },
+      { id: 'plano_7d', nome: '7 Dias VIP', dias: 7, preco_mzn: 555, preco_usdt: 12.22 },
+      { id: 'plano_15d', nome: '15 Dias VIP', dias: 15, preco_mzn: 799, preco_usdt: 15.55 },
+      { id: 'plano_30d', nome: '30 Dias VIP', dias: 30, preco_mzn: 899, preco_usdt: 22.32 },
+    ];
+  }
+
   const acessoCalculado = calcularAcessoFlexivel({
     valorUsdt: valorPagoUsdt,
     valorMzn: valorPagoMzn,
+    planos,
   });
 
   if (!acessoCalculado) {
@@ -202,7 +229,7 @@ async function verificarPorTxid({ codigo = null, txid, deviceId = null }) {
     return {
       sucesso: false,
       status: 'valor_insuficiente',
-      mensagem: `❌ O valor de ${displayValor} da transação ${txidLimpo} é insuficiente para ativar qualquer período de acesso (mínimo de 0.50 USDT ou 20 MT).`,
+      mensagem: `❌ O valor de ${displayValor} da transação ${txidLimpo} é insuficiente para ativar qualquer período de acesso com base nos planos vigentes.`,
       valor_usdt: valorPagoUsdt,
       valor_mzn: valorPagoMzn,
       txid: txidLimpo,

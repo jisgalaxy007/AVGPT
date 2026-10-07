@@ -119,13 +119,14 @@ As tabelas são criadas e migradas automaticamente ao iniciar o backend:
 - `badge`: Ex: `RECOMENDADA`, `POPULAR`, etc.
 - `criado_em`: Data de criação
 
-### 3. `planos` (Planos e Preços)
+### 3. `planos` (Planos e Preços - 100% Dinâmico)
 - `id`: Ex: `plano_1d`, `plano_7d`, `plano_15d`, `plano_30d`
 - `nome`: Ex: `1 Dia VIP`, `7 Dias VIP`, `15 Dias VIP`, `30 Dias VIP`
 - `dias`: Quantidade de dias de acesso (1, 7, 15, 30)
-- `preco_mzn`: Preço em Meticais (350.00, 555.00, 799.00, 899.00)
-- `preco_usdt`: Preço em USDT (6.00, 12.22, 15.55, 22.32)
+- `preco_mzn`: Preço em Meticais
+- `preco_usdt`: Preço em USDT
 - `periodo`, `is_popular`, `ativo`: Metadados
+> 💡 **Nota Importante:** O aplicativo Android obtém a lista atualizada chamando `GET /api/planos`. O motor de cálculo no backend lê os preços diretamente desta tabela em tempo real, recalculando horas e dias automaticamente se o administrador alterar qualquer valor.
 
 ### 4. `configuracoes` (Configurações Globais)
 - `id`: ID único (1)

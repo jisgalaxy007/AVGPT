@@ -17,6 +17,19 @@ Este documento contém todas as instruções, rotas, modelos de dados e exemplos
 
 ---
 
+## ⚠️ AVISO IMPORTANTE: PLANOS E PREÇOS 100% DINÂMICOS
+
+> [!IMPORTANT]
+> **NUNCA DEIXE PREÇOS, DIAS OU PLANOS FIXOS (HARDCODED) NO CÓDIGO DO APLICATIVO ANDROID!**  
+> O administrador pode alterar preços em Meticais (MT), preços em USDT, durações ou criar pacotes promocionais a qualquer momento diretamente pelo painel administrativo.
+> 
+> **Regra Obrigatória para a Interface do App:**
+> 1. Ao abrir a tela de Recarga / Pagamento, o App Android **DEVE** fazer uma requisição `GET /api/planos`.
+> 2. Renderize a lista de opções (botões, cards, textos) usando os dados retornados pela API (`nome`, `preco_mzn`, `preco_usdt`, `dias`, `is_popular`).
+> 3. O servidor valida pagamentos e calcula horas/dias consultando os planos vigentes no banco de dados em tempo real. Se o administrador alterar o preço de um plano hoje, o sistema de validação já reconhece o novo valor imediatamente.
+
+---
+
 ## 📱 Fluxo 1: Abertura do App & Checagem de Licença (Splash / Login)
 
 Toda vez que o usuário abre o aplicativo, o app deve sincronizar o aparelho com o servidor.
@@ -162,15 +175,15 @@ O cliente **não precisa criar pedido prévio**: basta colar o TXID / Hash ou N�
 }
 ```
 
-### 🧠 Regra de Cálculo Flexível e Proporcional:
-- **Se o valor for maior ou igual a um pacote (+/-)**:
-  - `>= 21.00 USDT` (ou 850 MT): **30 Dias VIP**
-  - `>= 14.50 USDT` (ou 700 MT): **15 Dias VIP**
-  - `>= 11.00 USDT` (ou 500 MT): **7 Dias VIP**
-  - `>= 5.00 USDT` (ou 300 MT): **1 Dia VIP** com horas extras proporcionais (ex: 7.08 USDT = 28 horas de acesso!).
-- **Se o valor for menor que 1 pacote diário (ex: 1 USDT a 4.99 USDT)**:
-  - O sistema **corta proporcionalmente em HORAS VIP** (taxa base: 6.00 USDT = 24 horas)!
-  - Exemplo: 2.99 USDT = **12 Horas VIP** ativadas na hora!
+### 🧠 Regra de Cálculo Flexível e Proporcional (100% Dinâmica):
+O cálculo **NÃO possui valores fixos no código**. Ele busca os planos ativos do banco de dados em tempo real:
+- **Se o valor for suficiente para um pacote (+/- 8% de tolerância para oscilações ou taxas de rede)**:
+  - O usuário recebe o plano correspondente + **horas extras proporcionais** se transferiu a mais!
+  - *Exemplo real:* Se o plano de 1 Dia custa 6.00 USDT e o cliente pagou 7.08 USDT, ele recebe **28 Horas VIP** (1 dia + 4 horas extras proporcionais).
+- **Se o valor for menor que o pacote mais barato ativo (ex: fração de USDT)**:
+  - O sistema **corta proporcionalmente em HORAS VIP** com base no custo por hora do menor plano cadastrado (`preço / (dias * 24)`).
+  - *Exemplo real:* O plano de 1 Dia custa 6.00 USDT (= 0.25 USDT/hora). Se o cliente pagou 2.99 USDT, o robô ativa **12 Horas VIP** na hora!
+- **Alterações de Preço:** Se o administrador subir ou descer o preço no painel, o cálculo de horas e dias se adapta imediatamente no backend.
 
 #### Resposta de Sucesso (HTTP 200):
 ```json
